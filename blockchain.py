@@ -218,7 +218,10 @@ def new_transaction():
 
     # Check that the required fields are in the POST'ed data
     required = ['sender', 'recipient', 'amount']
-    if not all(k in values for k in required):
+    try:
+        if not all(k in values for k in required):
+            return 'Missing values', 400
+    except TypeError:
         return 'Missing values', 400
 
     # Create a new Transaction
