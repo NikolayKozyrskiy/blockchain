@@ -13,7 +13,6 @@ class Blockchain:
         self.current_transactions = []
         self.chain = []
         self.nodes = set()
-
         # Create the genesis block
         self.new_block(previous_hash='1', proof=100)
 
