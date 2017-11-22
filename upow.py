@@ -7,20 +7,18 @@ import time
 from sympy import Matrix
 import hashlib
 
-WORKERS = 4
+WORKERS = 2
 
 
 def Gen(x, p, k, d):
     r = random.randint(0, p, len(x))
     f = functools.partial(Gen1, x=x, r=r, p=p)
-    gen = np.array( tuple( Pool(WORKERS).map( f, range(1, k*d+2) ) ) )
-    return gen
+    return np.array( tuple( Pool(WORKERS).map( f, range(1, k*d+2) ) ) )
 
 
 def Solve(y, n, k, d, p):
     f = functools.partial(Solve1, n=n, k=k, p=p, d=d)
-    res = list(Pool(WORKERS).map(f, y))
-    return res
+    return list(Pool(WORKERS).map(f, y))
 
 
 def Verify(y, tau, n, k, d, p):
@@ -33,22 +31,14 @@ def Gen1(t, x, r, p):
     return (x + t * r) % p
 
 def Solve1(y_t, n, k, d, p):
-    gOV = 0
     alpha = []
-    tau = []
+
     q_1_s = get_q_s(y_t, n, k, d, p, 0, []) % p
-
-    for i in range(n):
-        gOV = ( gOV + np.polyval(q_1_s, i) )% p
-
-    #gOV = functools.reduce(lambda x, y: (x + np.polyval(q_1_s, y)) % p, range(n))
-
-    tau.append(gOV % p)
-    tau.append(q_1_s % p)
+    gOV = functools.reduce(lambda x, y: (x + np.polyval(q_1_s, y)) % p, range(n), 0) % p
+    tau = [gOV, q_1_s]
 
     for s in range(1, k - 1):
-        # todo check hash
-        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # hash
+        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check hash
         tau.append(get_q_s(y_t, n, k, d, p, s, alpha) % p)
 
     return tau
@@ -56,36 +46,25 @@ def Solve1(y_t, n, k, d, p):
 
 def Verify1(y_tau_t, n, k, d, p):
     alpha = []
-    gOV = 0
     y_t = y_tau_t[0]
     tau_t = y_tau_t[1]
 
-    for i in range(n):
-        gOV = ( gOV +  np.polyval(tau_t[1], i) ) % p
-
-    if gOV % p != tau_t[0] % p:
+    gOV = functools.reduce(lambda x, y: (x + np.polyval(tau_t[1], y)) % p, range(n), 0) % p
+    if gOV != tau_t[0]:
         return False
 
     for s in range(0, k - 2):
-        part_sum = 0
         alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check
         q_alpha_s = np.polyval(tau_t[s+1], alpha[s]) % p
-        for i in range(n):
-            part_sum = ( part_sum + np.polyval(tau_t[s+2], i) ) % p
-
-        if q_alpha_s % p != part_sum % p:
+        part_sum = functools.reduce(lambda x, y: (x + np.polyval(tau_t[s+2], y)) % p, range(n), 0) % p
+        if q_alpha_s != part_sum:
             return False
 
-    end_sum = 0
     alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)
     q_real_coeff = get_q_s(y_t, n, k, d, p, k - 1, alpha) % p
-
-    for i in range(n):
-        end_sum = ( end_sum + np.polyval(q_real_coeff, i) ) % p
+    end_sum = functools.reduce(lambda x, y: (x + np.polyval(q_real_coeff, y)) % p, range(n), 0) % p
     q_sum_solver = np.polyval(tau_t[-1], alpha[-1]) % p
-    if q_sum_solver % p != end_sum % p:
-        print(q_real_coeff)
-        print(tau_t[-1])
+    if q_sum_solver != end_sum:
         return False
 
     return True
@@ -103,8 +82,8 @@ def get_phi_s_l_polinom(y, n, k, d, p, s, l):
             Matrix_p[i][j] = (i ** (n-j-1)) % p
     #coeffs - коэффициенты выходного полинома phi_s_l
     coeffs = Matrix(Matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n] % p)
-    for i in range(len(coeffs)):
-        result_coeffs[i] = coeffs[i] % p
+    for coef in coeffs:
+        result_coeffs[i] = coef % p
     return result_coeffs
 
 
@@ -144,19 +123,20 @@ if __name__ == '__main__':
     d = 15
     p = 11
     x = make_x_vector(n, d, k)
-    print(x)
 
     start = time.time()
-
 
     y = Gen(x, p, k, d)
     print(y)
     gen_time = time.time() - start
     print('gen_time: ', gen_time)
+
     z = Solve(y, n, k, d, p)
     print(z)
     solve_time = time.time() - gen_time - start
     print('solve_time: ',  solve_time)
+
     print(Verify(y, z, n, k, d, p))
     ver_time = time.time() - gen_time - solve_time - start
     print('ver_time: ',  ver_time)
+
