@@ -7,14 +7,15 @@ import time
 from sympy import Matrix
 import hashlib
 
-WORKERS = 2
+WORKERS = 4
 
 
 class Task(object):
-    def __init__(self, x: list, p):
+    def __init__(self, x: list, p, threads=1):
         self.k = len(x)
         self.n = x[0].shape[0]
         self.d = x[0].shape[1]
+        self.threads = threads
         x = list(map(lambda tmp: tmp.reshape(1, -1), x))
         self.x = np.concatenate(np.concatenate(x))
         self.p = p
@@ -34,6 +35,7 @@ class Challenge(object):
         self.d = task.d
         self.x = task.x
         self.y = y
+        self.threads = task.threads
 
         if y.shape[0] != (self.k * self.d + 1):
             raise ValueError
@@ -54,6 +56,7 @@ class Solution(object):
         self.y = challenge.y
         self.x = challenge.x
         self.tau = tau
+        self.threads = challenge.threads
 
         if self.y.shape[0] != (self.k * self.d + 1):
             raise ValueError
@@ -68,19 +71,18 @@ class Solution(object):
 def Gen(task: Task):
     r = random.randint(0, task.p, len(task.x))
     f = functools.partial(Gen1, x=task.x, r=r, p=task.p)
-    y = np.array( tuple( Pool(WORKERS).map( f, range(1, task.k * task.d + 2) ) ) )
+    y = np.array( tuple( Pool(task.threads).map( f, range(1, task.k * task.d + 2) ) ) )
     return Challenge(y, task)
 
 
 def Solve(challenge: Challenge):
     f = functools.partial(Solve1, n=challenge.n, k=challenge.k, p=challenge.p, d=challenge.d)
-    return Solution(list(Pool(WORKERS).map(f, challenge.y)), challenge)
-    #return list(Pool(WORKERS).map(f, challenge.y))
+    return Solution(list(Pool(challenge.threads).map(f, challenge.y)), challenge)
 
 
 def Verify(solution: Solution):
-    f = functools.partial(Verify1, n=sollution.n, k=sollution.k, d=sollution.d, p=sollution.p)
-    rets = list( Pool(WORKERS).map(f, list(zip(sollution.y, solution.tau))))
+    f = functools.partial(Verify1, n=solution.n, k=solution.k, d=solution.d, p=solution.p)
+    rets = list( Pool(challenge.threads).map(f, list(zip(solution.y, solution.tau))))
     return functools.reduce(lambda x, y: x and y, rets)
 
 
@@ -175,27 +177,23 @@ def get_q_s(y, k, n, d, p, s, alpha):
 
 
 if __name__ == '__main__':
-    n = 3
-    k = 2
-    d = 15
-    p = 11
-    x = make_x_vector(k, n, d)
+    for k in range(1, 10):
+        for n in range(1, 10):
+            for d in range(1, 25):
+                for p in (11, 601, 1289):
+                    for threads in (1, 2, 4, 8, 16):
+                        print("k %d n %d d %d p %d thr %d" % (k, n, d, p, threads))
+                        start = time.time()
+                        x = make_x_vector(k, n, d)
+                        challenge = Gen(Task(x, p, threads=threads))
+                        gen_time = time.time() - start
+                        print('gen_time: ', gen_time)
 
-    start = time.time()
+                        solution = Solve(challenge)
+                        solve_time = time.time() - gen_time - start
+                        print('solve_time: ',  solve_time)
 
-    print(Task(make_x_vector(k, n, d) , 11))
-
-    challenge = Gen(Task(x, p))
-    print(challenge)
-    gen_time = time.time() - start
-    print('gen_time: ', gen_time)
-
-    sollution = Solve(challenge)
-    print(sollution)
-    solve_time = time.time() - gen_time - start
-    print('solve_time: ',  solve_time)
-
-    print(Verify(sollution))
-    ver_time = time.time() - gen_time - solve_time - start
-    print('ver_time: ',  ver_time)
+                        print(Verify(solution))
+                        ver_time = time.time() - gen_time - solve_time - start
+                        print('ver_time: ',  ver_time)
 
