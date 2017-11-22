@@ -1,114 +1,98 @@
-import seaborn as sns
-from numpy.linalg import solve
-import math
 import numpy as np
-import pylab
-import random
+from numpy import random
+import functools
+from multiprocessing import Pool
+import time
 
 from sympy import Matrix
 import hashlib
 
-sns.set()
+WORKERS = 4
 
 
 def Gen(x, p, k, d):
-    length = (k * d + 1) * len(x)
-    gen = np.zeros(length)
-    r = np.zeros(length)
-    for i in range(len(x)):
-        r[i] = random.randint(0, p)
-    for t in range(1, k * d + 2):
-        for i in range(len(x)):
-            gen[(t-1) * len(x) + i] = t * r[i]
+    r = random.randint(0, p, len(x))
+    f = functools.partial(Gen1, x=x, r=r, p=p)
+    gen = np.array( tuple( Pool(WORKERS).map( f, range(1, k*d+2) ) ) )
     return gen
 
+
 def Solve(y, n, k, d, p):
-    gOV = np.zeros(k * d + 1)
-    q_s_pol_coeffs_quantity = (n - 1) * d + 1
+    f = functools.partial(Solve1, n=n, k=k, p=p, d=d)
+    res = list(Pool(WORKERS).map(f, y))
+    return res
+
+
+def Verify(y, tau, n, k, d, p):
+    f = functools.partial(Verify1, n=n, k=k, d=d, p=p)
+    rets = list( Pool(WORKERS).map(f, list(zip(y, tau))))
+    return functools.reduce(lambda x, y: x and y, rets)
+
+
+def Gen1(t, x, r, p):
+    return (x + t * r) % p
+
+def Solve1(y_t, n, k, d, p):
+    gOV = 0
     alpha = []
     tau = []
-    x = np.zeros(q_s_pol_coeffs_quantity)
+    q_1_s = get_q_s(y_t, n, k, d, p, 0, []) % p
 
-    for t in range(1, k * d + 2):
-        y_t = y[(t-1) * n * k * d : t * n * k * d]
-        q_1_s = get_q_s(y_t, n, k, d, p, 0, [])
-        for i in range(n):
-            for j in range(q_s_pol_coeffs_quantity):
-                x[j] = (i ** (q_s_pol_coeffs_quantity-j-1)) % p
-            gOV[t-1] = (gOV[t-1] + sum(q_1_s * x)) % p
-        tau.append(gOV[t-1])
-        tau.append(q_1_s)
-        print("gOV in Solve = ", gOV)
-        for s in range(1, k - 1):
-            # todo check hash
-            alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # hash
-            print(alpha, "solve")
-            # print(alpha, "alpha")
-            tau.append(get_q_s(y_t, n, k, d, p, s, alpha))
-    print("tau[1] = ", tau[1])
+    for i in range(n):
+        gOV = ( gOV + np.polyval(q_1_s, i) )% p
+
+    #gOV = functools.reduce(lambda x, y: (x + np.polyval(q_1_s, y)) % p, range(n))
+
+    tau.append(gOV % p)
+    tau.append(q_1_s % p)
+
+    for s in range(1, k - 1):
+        # todo check hash
+        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # hash
+        tau.append(get_q_s(y_t, n, k, d, p, s, alpha) % p)
+
     return tau
 
 
-def Verify(y, n, k, d, p, tau):
-    accept = "accept"
-    reject = "reject"
+def Verify1(y_tau_t, n, k, d, p):
     alpha = []
-    q_s_pol_coeffs_quantity = (n - 1) * d + 1
-    x = np.zeros(q_s_pol_coeffs_quantity)
     gOV = 0
-    for t in range(1, k * d + 2):
-        gOV = 0
-        y_t = y[(t-1) * n * k * d: t * n * k * d]
-        for i in range (n):
-            for j in range(q_s_pol_coeffs_quantity):
-                x[j] = (i ** (q_s_pol_coeffs_quantity - j - 1)) % p
-            gOV = gOV + sum(tau[t * k + 1 - k] * x)
-        print("eeeeeeeeeeeeeeeeee")
-        if (gOV % p != tau[t * k - k]):
-            print("ededede")
-            return "1reject"
+    y_t = y_tau_t[0]
+    tau_t = y_tau_t[1]
 
-        for s in range(0, k-2):
-            gOV = 0
-            # todo: check
-            print("blyaaaaaaaa")
-            alpha.append(int(hashlib.sha256(1).hexdigest(), 16) % n)  # todo check
-            for j in range(q_s_pol_coeffs_quantity):
-                x[j] = (alpha[s] ** (q_s_pol_coeffs_quantity - j - 1)) % p
-            q_alpha_s=sum(tau[t * k + s+1 - k] * x)
-            for i in range(n):
-                for j in range(q_s_pol_coeffs_quantity):
-                    x[j] = (i ** (q_s_pol_coeffs_quantity - j-1)) % p
-                gOV = gOV + sum(tau[t * k + s + 2 - k ] * x)
-            if (q_alpha_s != gOV):
-                return "2reject"
-                # todo: check
-        gOV = 0
-        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)
-        print("alpha = ", alpha)
-        coeffs_real=np.zeros((n-1) * d + 1)
-        q_real_coeff=get_q_s(y_t, n, k, d, p, k-1, alpha)
+    for i in range(n):
+        gOV = ( gOV +  np.polyval(tau_t[1], i) ) % p
+
+    if gOV % p != tau_t[0] % p:
+        return False
+
+    for s in range(0, k - 2):
+        part_sum = 0
+        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check
+        q_alpha_s = np.polyval(tau_t[s+1], alpha[s]) % p
         for i in range(n):
-            for j in range(q_s_pol_coeffs_quantity):
-                x[j] = (i ** (q_s_pol_coeffs_quantity - j-1)) % p
-            gOV=gOV+sum(q_real_coeff*x)
-        for j in range(q_s_pol_coeffs_quantity):
-            x[j] = (alpha[len(alpha) - 1] ** (q_s_pol_coeffs_quantity - j-1)) % p
-        q_sum_solver=sum(tau[t * k - 1] * x)
-        print("q_sum_solver % p = ", q_sum_solver % p)
-        print("gOV % p = ", gOV % p)
-        q_sum_solver = q_sum_solver %p
-        gOV = gOV % p
-        if (q_sum_solver != gOV):
-            return "3reject"
-    return accept
+            part_sum = ( part_sum + np.polyval(tau_t[s+2], i) ) % p
+
+        if q_alpha_s % p != part_sum % p:
+            return False
+
+    end_sum = 0
+    alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)
+    q_real_coeff = get_q_s(y_t, n, k, d, p, k - 1, alpha) % p
+
+    for i in range(n):
+        end_sum = ( end_sum + np.polyval(q_real_coeff, i) ) % p
+    q_sum_solver = np.polyval(tau_t[-1], alpha[-1]) % p
+    if q_sum_solver % p != end_sum % p:
+        print(q_real_coeff)
+        print(tau_t[-1])
+        return False
+
+    return True
 
 
 def make_x_vector(n, k, d):
-    v = np.zeros(n * k * d)
-    for i in range(n * k * d):
-        v[i] = int(random.randint(0, 1))
-    return v
+    return random.randint(0, 2, n*k*d)
 
 # s-номер множества , l - номер коодинаты в векторе y - входной вектор
 def get_phi_s_l_polinom(y, n, k, d, p, s, l):
@@ -116,17 +100,15 @@ def get_phi_s_l_polinom(y, n, k, d, p, s, l):
     result_coeffs = np.zeros(n)
     for i in range(n):
         for j in range(n):
-            Matrix_p[i][j] = (i ** j) % p
+            Matrix_p[i][j] = (i ** (n-j-1)) % p
     #coeffs - коэффициенты выходного полинома phi_s_l
-    coeffs = Matrix(Matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n])
+    coeffs = Matrix(Matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n] % p)
     for i in range(len(coeffs)):
         result_coeffs[i] = coeffs[i] % p
     return result_coeffs
 
 
 def get_q_s(y, n, k, d, p, s, alpha):
-    coeffs = np.array([1])
-    buf_var = 1
     coeffs_res = np.zeros((n - 1) * d + 1)
     for i in range(n ** (k - s -1)):
         coeffs = np.array([1])
@@ -138,32 +120,43 @@ def get_q_s(y, n, k, d, p, s, alpha):
             for j in range(s + 1, k):
                 set_number_j = n * j * d
                 vector_number_in_j_set = int(i / (n ** (j - s - 1 )))
-                buf_var = buf_var * y[set_number_j + coord_number_l + vector_number_in_j_set % n]
+                buf_var = (buf_var * y[set_number_j + coord_number_l + vector_number_in_j_set % n]) % p
             for e in range(s):
                 set_number_e = n * e * d
-                buf_var = buf_var * y[set_number_e + coord_number_l + alpha[e]]
+                buf_var = (buf_var * y[set_number_e + coord_number_l + alpha[e]]) % p
 
-            coeff_one = (-1) * get_phi_s_l_polinom(y, n, k, d, p, s, l) * buf_var
-            coeff_one[len(coeff_one) - 1] = (coeff_one[len(coeff_one) - 1] + 1) % p
-            # print(coeff_one)
+            coeff_one = ((-1) * get_phi_s_l_polinom(y, n, k, d, p, s, l) * buf_var) % p
+            coeff_one[- 1] = (coeff_one[- 1] + 1) % p
+
             #свертка коэффициентов (q(alpha(1),..,alpha(s-1), x , I(s+1),...,I(k))
-            coeffs = np.convolve(coeffs, coeff_one)
-            # print(coeffs)
+            coeffs = np.convolve(coeffs, coeff_one) % p
 
         #сумма по всем выборкам (I(s+1),..,I(k))
-        coeffs_res = coeffs_res + coeffs
+        coeffs_res = (coeffs_res + coeffs) % p
 
-    return coeffs_res % p
+    return coeffs_res
 
 
-n = 3
-k = 2
-d = 2
-p = 11
-x = make_x_vector(n, d, k)
-# x=list(np.linspace(1, 12, 12))
-y = Gen(x, p, k, d)
-print("y = ", y, "------------\n")
-a = Verify(y, n, k, d, p, tau=Solve(y, n, k, d, p))
-print(a)
-#print("Result of Solver([10101,1,2,3,100,5,10,11,12,13,14,15,101,2,3,3,7110,58,101,11,102,13,14,15],2,3,2,7) =\n", Solver([10101,1,2,3,100,5,10,11,12,13,14,15,101,2,3,3,7110,58,101,11,102,13,14,15],2,3,2,7))
+
+if __name__ == '__main__':
+    n = 3
+    k = 2
+    d = 15
+    p = 11
+    x = make_x_vector(n, d, k)
+    print(x)
+
+    start = time.time()
+
+
+    y = Gen(x, p, k, d)
+    print(y)
+    gen_time = time.time() - start
+    print('gen_time: ', gen_time)
+    z = Solve(y, n, k, d, p)
+    print(z)
+    solve_time = time.time() - gen_time - start
+    print('solve_time: ',  solve_time)
+    print(Verify(y, z, n, k, d, p))
+    ver_time = time.time() - gen_time - solve_time - start
+    print('ver_time: ',  ver_time)
