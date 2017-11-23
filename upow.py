@@ -4,21 +4,36 @@ import functools
 from multiprocessing import Pool
 import time
 
-from sympy import Matrix
+from sympy import Matrix, isprime
 import hashlib
 
-WORKERS = 4
+
+def polyval_p(coef, x, p):
+    coef = np.asarray(coef)
+    x = np.asarray(x)
+    y = np.zeros_like(x)
+    for i in range(len(coef)):
+        y = (y * x + coef[i]) % p
+    return y
 
 
 class Task(object):
-    def __init__(self, x: list, p, threads=1):
-        self.k = len(x)
-        self.n = x[0].shape[0]
-        self.d = x[0].shape[1]
-        self.threads = threads
-        x = list(map(lambda tmp: tmp.reshape(1, -1), x))
-        self.x = np.concatenate(np.concatenate(x))
+    def __init__(self, x: list, p, threads=1, **kwargs):
         self.p = p
+        self.threads = threads
+
+        if len(kwargs) == 0:
+            self.k = len(x)
+            self.n = x[0].shape[0]
+            self.d = x[0].shape[1]
+            x = list(map(lambda tmp: tmp.reshape(1, -1), x))
+            self.x = np.concatenate(np.concatenate(x))
+
+        else:
+            self.x = x
+            self.k = kwargs['k']
+            self.n = kwargs['n']
+            self.d = kwargs['d']
 
         if self.x.size != (self.n * self.k * self.d):
             raise ValueError
@@ -46,6 +61,21 @@ class Challenge(object):
     def __str__(self):
         return ('Shape: (%d %d %d)\nPrime: %d\nValues:\n' % (self.k, self.n, self.d, self.p)) + str(self.y)
 
+    def save(self, filename):
+        np.savez(filename, self.x, self.y, np.array([self.k, self.n, self.d, self.p]))
+
+
+def load_challenge(filename, threads):
+    with np.load(filename) as f:
+        x = f['arr_0']
+        y = f['arr_1']
+        arr = f['arr_2']
+        k = arr[0]
+        n = arr[1]
+        d = arr[2]
+        p = arr[3]
+    return Challenge(y, Task(x, p, threads, k=k, n=n, d=d))
+
 
 class Solution(object):
     def __init__(self, tau: list, challenge: Challenge):
@@ -70,6 +100,7 @@ class Solution(object):
 
 def Gen(task: Task):
     r = random.randint(0, task.p, len(task.x))
+    #r = np.arange(0, len(task.x), 1, int)
     f = functools.partial(Gen1, x=task.x, r=r, p=task.p)
     with Pool(task.threads) as pool:
         y = np.array( tuple( pool.map( f, range(1, task.k * task.d + 2) ) ) )
@@ -81,6 +112,7 @@ def Solve(challenge: Challenge):
     with Pool(challenge.threads) as pool:
         ret = Solution(list(pool.map(f, challenge.y)), challenge)
     return ret
+
 
 def Verify(solution: Solution):
     f = functools.partial(Verify1, n=solution.n, k=solution.k, d=solution.d, p=solution.p)
@@ -97,7 +129,7 @@ def Solve1(y_t, k, n, d, p):
     alpha = []
 
     q_1_s = get_q_s(y_t, k, n, d, p, 0, []) % p
-    gOV = functools.reduce(lambda x, y: (x + np.polyval(q_1_s, y)) % p, range(n), 0) % p
+    gOV = functools.reduce(lambda x, y: (x + polyval_p(q_1_s, y, p)) % p, range(n), 0) % p
     tau = [gOV, q_1_s]
 
     for s in range(1, k - 1):
@@ -112,48 +144,56 @@ def Verify1(y_tau_t, k, n, d, p):
     y_t = y_tau_t[0]
     tau_t = y_tau_t[1]
 
-    gOV = functools.reduce(lambda x, y: (x + np.polyval(tau_t[1], y)) % p, range(n), 0) % p
+    gOV = functools.reduce(lambda x, y: (x + polyval_p(tau_t[1], y, p)) % p, range(n), 0) % p
     if gOV != tau_t[0]:
         return False
 
     for s in range(0, k - 2):
         alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check
-        q_alpha_s = np.polyval(tau_t[s+1], alpha[s]) % p
-        part_sum = functools.reduce(lambda x, y: (x + np.polyval(tau_t[s+2], y)) % p, range(n), 0) % p
+        q_alpha_s = polyval_p(tau_t[s+1], alpha[s], p) % p
+        part_sum = functools.reduce(lambda x, y: (x + polyval_p(tau_t[s+2], y, p)) % p, range(n), 0) % p
         if q_alpha_s != part_sum:
             return False
 
     alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)
     q_real_coeff = get_q_s(y_t, k, n, d, p, k - 1, alpha) % p
-    end_sum = functools.reduce(lambda x, y: (x + np.polyval(q_real_coeff, y)) % p, range(n), 0) % p
-    q_sum_solver = np.polyval(tau_t[-1], alpha[-1]) % p
+    end_sum = functools.reduce(lambda x, y: (x + polyval_p(q_real_coeff, y, p)) % p, range(n), 0) % p
+    q_sum_solver = polyval_p(tau_t[-1], alpha[-1], p) % p
     if q_sum_solver != end_sum:
         return False
-
     return True
 
 
 def make_x_vector(k, n, d):
     return list(map(lambda tmp: random.randint(0, 2, (n, d)), range(k)))
+    #return list(map(lambda tmp: np.arange(1, n*d+1).reshape(n, d) % 2, range(k)))
+
 
 # s-номер множества , l - номер коодинаты в векторе y - входной вектор
 def get_phi_s_l_polinom(y, k, n, d, p, s, l):
-    Matrix_p = np.zeros((n, n))
-    result_coeffs = np.zeros(n)
-    for i in range(n):
-        for j in range(n):
-            Matrix_p[i][j] = (i ** (n-j-1)) % p
-    #coeffs - коэффициенты выходного полинома phi_s_l
-    coeffs = Matrix(Matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n] % p)
+    result_coeffs = np.zeros(n, dtype=int)
+    matrix_p = get_matrix_p(n, p)
+
+    # coeffs - коэффициенты выходного полинома phi_s_l
+    coeffs = Matrix(matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n] % p)
     for i, coef in enumerate(coeffs):
         result_coeffs[i] = coef % p
+
     return result_coeffs
 
 
+def get_matrix_p(n, p):
+    matrix_p = np.zeros((n, n), dtype=int)
+    for i in range(n):
+        for j in range(n):
+            matrix_p[i][j] = (i ** (n-j-1)) % p
+    return matrix_p
+
+
 def get_q_s(y, k, n, d, p, s, alpha):
-    coeffs_res = np.zeros((n - 1) * d + 1)
+    coeffs_res = np.zeros((n - 1) * d + 1, dtype=int)
     for i in range(n ** (k - s -1)):
-        coeffs = np.array([1])
+        coeffs = np.array([1], dtype=int)
 
         for l in range(d):
             buf_var = 1
@@ -179,24 +219,38 @@ def get_q_s(y, k, n, d, p, s, alpha):
     return coeffs_res
 
 
-if __name__ == '__main__':
-    for k in range(1, 10):
+def test1(k, n, threads):
+    d = int(np.ceil(np.log2(n) ** 2))
+    p = int(np.ceil(n ** np.log2(n)))
+    while not isprime(p):
+        p += 1
+    print("k %d n %d d %d p %d thr %d" % (k, n, d, p, threads))
+    x = make_x_vector(k, n, d)
+    #print(x)
+    start = time.time()
+
+    challenge = Gen(Task(x, p, threads=threads))
+    gen_time = time.time() - start
+    print('gen_time: ', gen_time)
+
+    solution = Solve(challenge)
+    solve_time = time.time() - gen_time - start
+    print('solve_time: ', solve_time)
+    #print(solution)
+
+    ans = Verify(solution)
+    print(ans)
+    ver_time = time.time() - gen_time - solve_time - start
+    print('ver_time: ', ver_time)
+
+
+def test():
+    for k in range(2, 10):
         for n in range(1, 10):
-            for d in range(1, 25):
-                for p in (11, 601, 1289):
-                    for threads in (1, 2, 4, 8, 16):
-                        print("k %d n %d d %d p %d thr %d" % (k, n, d, p, threads))
-                        start = time.time()
-                        x = make_x_vector(k, n, d)
-                        challenge = Gen(Task(x, p, threads=threads))
-                        gen_time = time.time() - start
-                        print('gen_time: ', gen_time)
+            for threads in (1, 2, 4, 8, 16):
+                test1(k, n, threads)
 
-                        solution = Solve(challenge)
-                        solve_time = time.time() - gen_time - start
-                        print('solve_time: ',  solve_time)
 
-                        print(Verify(solution))
-                        ver_time = time.time() - gen_time - solve_time - start
-                        print('ver_time: ',  ver_time)
+if __name__ == '__main__':
+    test()
 
