@@ -71,18 +71,21 @@ class Solution(object):
 def Gen(task: Task):
     r = random.randint(0, task.p, len(task.x))
     f = functools.partial(Gen1, x=task.x, r=r, p=task.p)
-    y = np.array( tuple( Pool(task.threads).map( f, range(1, task.k * task.d + 2) ) ) )
+    with Pool(task.threads) as pool:
+        y = np.array( tuple( pool.map( f, range(1, task.k * task.d + 2) ) ) )
     return Challenge(y, task)
 
 
 def Solve(challenge: Challenge):
     f = functools.partial(Solve1, n=challenge.n, k=challenge.k, p=challenge.p, d=challenge.d)
-    return Solution(list(Pool(challenge.threads).map(f, challenge.y)), challenge)
-
+    with Pool(challenge.threads) as pool:
+        ret = Solution(list(pool.map(f, challenge.y)), challenge)
+    return ret
 
 def Verify(solution: Solution):
     f = functools.partial(Verify1, n=solution.n, k=solution.k, d=solution.d, p=solution.p)
-    rets = list( Pool(challenge.threads).map(f, list(zip(solution.y, solution.tau))))
+    with Pool(solution.threads) as pool:
+        rets = list( pool.map(f, list(zip(solution.y, solution.tau))))
     return functools.reduce(lambda x, y: x and y, rets)
 
 
