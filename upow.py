@@ -3,6 +3,7 @@ from numpy import random
 import functools
 from multiprocessing import Pool
 import time
+import polymod
 
 from sympy import Matrix, isprime
 import hashlib
@@ -171,23 +172,8 @@ def make_x_vector(k, n, d):
 
 # s-номер множества , l - номер коодинаты в векторе y - входной вектор
 def get_phi_s_l_polinom(y, k, n, d, p, s, l):
-    result_coeffs = np.zeros(n, dtype=int)
-    matrix_p = get_matrix_p(n, p)
-
-    # coeffs - коэффициенты выходного полинома phi_s_l
-    coeffs = Matrix(matrix_p).inv_mod(p) * Matrix(y[s * n * d + l * n: s * n * d + (l + 1) * n] % p)
-    for i, coef in enumerate(coeffs):
-        result_coeffs[i] = coef % p
-
-    return result_coeffs
-
-
-def get_matrix_p(n, p):
-    matrix_p = np.zeros((n, n), dtype=int)
-    for i in range(n):
-        for j in range(n):
-            matrix_p[i][j] = (i ** (n-j-1)) % p
-    return matrix_p
+    coeffs = polymod.lagrange(np.arange(0, n, dtype=int), y[s * n * d + l * n: s * n * d + (l + 1) * n], p, n)
+    return coeffs
 
 
 def get_q_s(y, k, n, d, p, s, alpha):
@@ -226,7 +212,6 @@ def test1(k, n, threads):
         p += 1
     print("k %d n %d d %d p %d thr %d" % (k, n, d, p, threads))
     x = make_x_vector(k, n, d)
-    #print(x)
     start = time.time()
 
     challenge = Gen(Task(x, p, threads=threads))
@@ -236,7 +221,6 @@ def test1(k, n, threads):
     solution = Solve(challenge)
     solve_time = time.time() - gen_time - start
     print('solve_time: ', solve_time)
-    #print(solution)
 
     ans = Verify(solution)
     print(ans)
@@ -252,5 +236,5 @@ def test():
 
 
 if __name__ == '__main__':
-    test()
+    test1(5,5,4)
 
