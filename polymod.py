@@ -18,7 +18,7 @@ def modinv(a, m):
 
 
 def lagrange(x: np.array, w: np.array, m, n):
-    res = np.zeros(n)
+    res = np.zeros(n, dtype=int)
     M = len(x)
     p = np.poly1d(np.array([0], dtype=int))
     for j in range(M):

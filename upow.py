@@ -131,12 +131,11 @@ def Solve1(y_t, k, n, d, p):
 
     q_1_s = get_q_s(y_t, k, n, d, p, 0, []) % p
     gOV = functools.reduce(lambda x, y: (x + polyval_p(q_1_s, y, p)) % p, range(n), 0) % p
-    tau = [gOV, q_1_s]
+    tau = [np.array([gOV]), q_1_s]
 
     for s in range(1, k - 1):
-        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check hash
+        alpha.append(int(hashlib.sha256(np.concatenate(tau)).hexdigest(), 16) % n)  # todo check hash
         tau.append(get_q_s(y_t, k, n, d, p, s, alpha) % p)
-
     return tau
 
 
@@ -150,13 +149,12 @@ def Verify1(y_tau_t, k, n, d, p):
         return False
 
     for s in range(0, k - 2):
-        alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)  # todo check
+        alpha.append(int(hashlib.sha256(np.concatenate(tau_t[0:s+2])).hexdigest(), 16) % n)  # todo check
         q_alpha_s = polyval_p(tau_t[s+1], alpha[s], p) % p
         part_sum = functools.reduce(lambda x, y: (x + polyval_p(tau_t[s+2], y, p)) % p, range(n), 0) % p
         if q_alpha_s != part_sum:
             return False
-
-    alpha.append(int(hashlib.sha256(np.array([1, 1, 1])).hexdigest(), 16) % n)
+    alpha.append(int(hashlib.sha256(np.concatenate(tau_t[0:k-1])).hexdigest(), 16) % n)
     q_real_coeff = get_q_s(y_t, k, n, d, p, k - 1, alpha) % p
     end_sum = functools.reduce(lambda x, y: (x + polyval_p(q_real_coeff, y, p)) % p, range(n), 0) % p
     q_sum_solver = polyval_p(tau_t[-1], alpha[-1], p) % p
@@ -236,5 +234,5 @@ def test():
 
 
 if __name__ == '__main__':
-    test1(5,5,4)
+    test1(3,7,1)
 
